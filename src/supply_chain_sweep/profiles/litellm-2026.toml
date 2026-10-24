@@ -1,0 +1,40 @@
+# LiteLLM PyPI compromises (TeamPCP), March and October 2026.
+# 1.82.7 runs its payload on `import litellm`; 1.82.8 and 1.107.0 ship a .pth file
+# that runs on every interpreter start, so any Python in that environment is affected.
+id = "litellm-2026"
+name = "LiteLLM PyPI compromise (1.82.7, 1.82.8, 1.107.0)"
+description = "Credential stealer and backdoor injected into LiteLLM releases on PyPI."
+references = [
+    "https://osv.dev/vulnerability/MAL-2026-2144",
+    "https://github.com/BerriAI/litellm/issues/24512",
+    "https://safedep.io/malicious-litellm-1-82-8-analysis",
+]
+
+file_names = ["litellm_init.pth", "cook.pth"]
+
+hashes = [
+    # litellm-1.82.8-py3-none-any.whl
+    "sha256:d2a0d5f564628773b6af7b9c11f6b86531a875bd2d186d7081ab62748a800ebb",
+    # litellm_init.pth (1.82.8)
+    "sha256:71e35aef03099cd1f2d6446734273025a163597de93912df321ef118bf135238",
+    # cook.pth, cook.py, sitecustomize.py (1.107.0)
+    "sha256:7f191632e7320705d154b85204f1ae546b543acbd7e8861229b76f5042b92bdb",
+    "sha256:9dd0a3926f96a37eb86cf1ee2310d9be93139cc4ebef3ef9e2efe9531390be25",
+    "sha256:34bef04fe88ac9d0aae0475630b1738681d15b94f233ac8aa46eacf5968305fa",
+]
+
+persistence_paths = [
+    "~/.config/sysmon/sysmon.py",
+    "~/.config/systemd/user/sysmon.service",
+    "/tmp/pglog",
+    "/tmp/.pg_state",
+    "/tmp/.pc_once_72129118c59f5636c0bb",
+]
+
+domains = ["models.litellm.cloud", "litellm.cloud", "checkmarx.zone", "www.litellm.dev"]
+
+# Tables must come after the top-level keys above.
+[[packages]]
+ecosystem = "PyPI"
+name = "litellm"
+versions = ["1.82.7", "1.82.8", "1.107.0"]

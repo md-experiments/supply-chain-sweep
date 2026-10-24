@@ -1,0 +1,34 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "supply-chain-sweep"
+version = "0.1.0"
+description = "Find known-malicious Python and npm package versions, and signs they ran, anywhere on a host."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = ["packaging>=23"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Topic :: Security",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+supply-chain-sweep = "supply_chain_sweep.cli:main"
+sweep = "supply_chain_sweep.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/supply_chain_sweep"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
