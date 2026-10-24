@@ -60,6 +60,30 @@ class PthAllow:
 
 
 @dataclass
+class MonitorConfig:
+    """`[monitor]` section of config.toml."""
+
+    learning_days: float = 7.0  # MON-14
+    new_domain_days: int = 30  # MON-9
+    retention_days: float = 30.0  # MON-NFR-3
+    rdap: bool = True  # registration-age lookups (sends one domain per request)
+    rdap_per_hour: int = 60
+    psl_download: bool = True  # fetch the Public Suffix List (sends nothing about the host)
+    threat_feeds: list[dict] = field(default_factory=list)  # [{name, url, format: hosts|domains}]
+    allow: list[dict] = field(default_factory=list)  # [{domain, category}]
+    brands: dict[str, list[str]] = field(default_factory=dict)  # extra lookalike brands
+    notify: bool = True
+    notify_user: str = ""  # desktop user to notify when the daemon runs as root
+    max_alerts_per_day: int = 5  # MON-NFR-12; threat-feed hits are never suppressed
+    digest_hour: int = 9  # MON-20, local time
+    alert_command: str = ""
+    scan_on_critical: bool = True  # MON-26
+    interfaces: list[str] = field(default_factory=list)  # empty: all interfaces
+    attribution: str = "auto"  # auto | ebpf | proc: eBPF (bpftrace) when available, else /proc
+    exclude_browsers: bool = True  # MON-17
+
+
+@dataclass
 class Config:
     roots: list[Path] = field(default_factory=default_roots)
     exclude: list[Path] = field(default_factory=list)
@@ -74,6 +98,7 @@ class Config:
     alert_command: str = ""
     max_depth: int = 12
     data_dir: Path = field(default_factory=data_dir)
+    monitor: MonitorConfig = field(default_factory=MonitorConfig)
 
 
 def _paths(values) -> list[Path]:
@@ -110,6 +135,10 @@ def load_config(path: Path | None = None) -> Config:
             PthAllow(entry["name"], entry.get("sha256", ""), entry.get("contains", ""))
         )
     cfg.alert_command = raw.get("alert", {}).get("command", "")
+    mon = raw.get("monitor", {})
+    for key, value in mon.items():
+        if hasattr(cfg.monitor, key):
+            setattr(cfg.monitor, key, type(getattr(cfg.monitor, key))(value))
     if raw.get("data_dir"):
         cfg.data_dir = Path(raw["data_dir"]).expanduser()
     return cfg

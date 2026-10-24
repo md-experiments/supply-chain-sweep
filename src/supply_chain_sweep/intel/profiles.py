@@ -10,6 +10,7 @@ Example::
     hashes = ["sha256:71e35aef..."]            # hex, algo:hex or wheel RECORD base64
     persistence_paths = ["~/.config/sysmon/sysmon.py"]
     domains = ["models.litellm.cloud"]
+    ips = ["203.0.113.7"]                       # used by the network monitor
 
     # [[packages]] tables go last: TOML assigns later keys to the table.
     [[packages]]
@@ -46,6 +47,7 @@ class Profile:
     hashes: list[str] = field(default_factory=list)
     persistence_paths: list[str] = field(default_factory=list)
     domains: list[str] = field(default_factory=list)
+    ips: list[str] = field(default_factory=list)  # network monitor IP indicators
     source: str = ""
 
     def matches_package(self, ecosystem: str, name: str) -> list[ProfilePackage]:
@@ -62,7 +64,7 @@ def parse_profile(data: dict, source: str) -> Profile:
     if not data.get("id"):
         raise ValueError("profile is missing 'id'")
     for p in data.get("packages", []):
-        misplaced = set(p) & {"file_names", "hashes", "persistence_paths", "domains", "references"}
+        misplaced = set(p) & {"file_names", "hashes", "persistence_paths", "domains", "ips", "references"}
         if misplaced:
             raise ValueError(
                 f"{', '.join(sorted(misplaced))} ended up inside [[packages]]; move top-level keys above it"
@@ -90,6 +92,7 @@ def parse_profile(data: dict, source: str) -> Profile:
         hashes=hashes,
         persistence_paths=[str(p) for p in data.get("persistence_paths", [])],
         domains=[str(d).lower() for d in data.get("domains", [])],
+        ips=[str(i) for i in data.get("ips", [])],
         source=source,
     )
 

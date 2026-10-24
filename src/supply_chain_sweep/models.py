@@ -22,11 +22,13 @@ class SourceType(str, enum.Enum):
 class Severity(str, enum.Enum):
     CRITICAL = "critical"
     HIGH = "high"
+    MEDIUM = "medium"  # network monitor only
+    LOW = "low"  # network monitor only
     INFO = "info"
 
     @property
     def rank(self) -> int:
-        return {"critical": 0, "high": 1, "info": 2}[self.value]
+        return {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}[self.value]
 
 
 @dataclass

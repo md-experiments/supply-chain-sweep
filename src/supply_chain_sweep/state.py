@@ -46,10 +46,13 @@ class Diff:
 
 
 class State:
-    def __init__(self, data_dir: Path) -> None:
+    def __init__(self, data_dir: Path, readonly: bool = False) -> None:
+        self.lock = threading.Lock()
+        if readonly:
+            self.conn = sqlite3.connect(f"file:{data_dir / 'state.db'}?mode=ro", uri=True, check_same_thread=False)
+            return
         data_dir.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(data_dir / "state.db", check_same_thread=False)
-        self.lock = threading.Lock()
         self.conn.executescript(SCHEMA)
 
     def close(self) -> None:
@@ -162,6 +165,28 @@ class State:
             cur.execute("DELETE FROM scans WHERE id = ?", (scan_id,))
         stale = [r[0] for r in cur.execute("SELECT path FROM hash_cache") if not os.path.exists(r[0])]
         cur.executemany("DELETE FROM hash_cache WHERE path = ?", [(p,) for p in stale])
+
+    def container_summary(self, containers: list[str]) -> dict | None:
+        """What the last full scan found in an environment or image (network monitor link, MON-24)."""
+        scan = self.last_scan_id("full")
+        if scan is None or not containers:
+            return None
+        marks = ",".join("?" * len(containers))
+        n = self.conn.execute(
+            f"SELECT COUNT(*) FROM packages WHERE scan_id = ? AND container IN ({marks})", (scan, *containers)
+        ).fetchone()[0]
+        if not n:
+            return None
+        crit = []
+        for (data,) in self.conn.execute(
+            "SELECT data FROM findings WHERE scan_id = ? AND severity IN ('critical', 'high')", (scan,)
+        ):
+            f = json.loads(data)
+            where = (f.get("package") or {}).get("container") or f.get("details", {}).get("environment", "")
+            if where in containers:
+                crit.append({"severity": f["severity"], "title": f["title"], "location": f["location"]})
+        started = self.conn.execute("SELECT started FROM scans WHERE id = ?", (scan,)).fetchone()[0]
+        return {"scan_id": scan, "scanned": started, "packages": n, "findings": crit[:10]}
 
     def history(self, limit: int = 10) -> list[dict]:
         rows = self.conn.execute(
