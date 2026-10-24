@@ -6,6 +6,7 @@ import argparse
 import json
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -42,6 +43,20 @@ def _config(args):
     return cfg
 
 
+def _retro(cfg, extra_profiles=()) -> None:
+    """New IOC data: search the network monitor's stored DNS history for it (MON-25)."""
+    from .monitor.cli import retro_after_update
+    from .monitor.detect import to_finding
+
+    try:
+        rows = retro_after_update(cfg, list(extra_profiles))
+    except sqlite3.Error as exc:  # e.g. the service's database is read-only for this user
+        _err(f"skipped network monitor history check: {exc}")
+        return
+    for row in rows:
+        _err(f"network monitor history: {to_finding(row).title}")
+
+
 def cmd_update(args) -> int:
     cfg = _config(args)
     db = OsvDB(cfg.data_dir / "osv.db")
@@ -50,6 +65,7 @@ def cmd_update(args) -> int:
     errors = sync(db, cfg.feeds, full=args.full, log=log)
     stats = db.stats()
     db.close()
+    _retro(cfg)
     for e in errors:
         _err(f"update failed: {e}")
     if not args.quiet:
@@ -91,6 +107,7 @@ def cmd_scan(args) -> int:
 
     if result.new_critical:
         _alert(result, args.alert_cmd or cfg.alert_command, args.notify)
+    _retro(cfg, options.extra_profiles)
     return EXIT_CRITICAL if result.has_critical else EXIT_CLEAN
 
 
@@ -224,6 +241,10 @@ def build_parser() -> argparse.ArgumentParser:
     sc.add_argument("--cron", action="store_true", help="on macOS, print a cron line instead of a launchd plist")
     sc.add_argument("--alert-cmd", metavar="CMD")
     sc.set_defaults(func=cmd_schedule)
+
+    from .monitor.cli import add_parsers
+
+    add_parsers(sub)
     return p
 
 
@@ -232,15 +253,22 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     # `sweep [--config F] [scan options]` defaults to the scan command.
     i = 2 if argv[:1] == ["--config"] else 0
-    if argv[i:i + 1] not in (["scan"], ["update"], ["profiles"], ["history"], ["schedule"], ["-h"], ["--help"], ["--version"]):
+    if argv[i:i + 1] not in (["scan"], ["update"], ["profiles"], ["history"], ["schedule"], ["monitor"], ["report"],
+                          ["-h"], ["--help"], ["--version"]):
         argv.insert(i, "scan")
     args = parser.parse_args(argv)
     try:
+        if args.command in ("monitor", "report"):
+            args.cfg = _config(args)
         return args.func(args)
     except KeyboardInterrupt:
         return 130
     except (FileNotFoundError, ValueError) as exc:
         _err(f"error: {exc}")
+        return EXIT_ERROR
+    except sqlite3.OperationalError as exc:
+        hint = " (the monitor service's data is read-only for users: retry with sudo)" if "readonly" in str(exc) else ""
+        _err(f"error: {exc}{hint}")
         return EXIT_ERROR
 
 

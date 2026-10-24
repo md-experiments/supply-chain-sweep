@@ -81,6 +81,45 @@ def print_summary(result: ScanResult, stream: TextIO = sys.stdout, verbose: bool
     w(f"\n{verdict}: {c['critical']} critical, {c['high']} high, {c['info']} info\n")
 
 
+def print_findings(findings: list[Finding], stream: TextIO = sys.stdout, verbose: bool = False,
+                   heading: str = "") -> None:
+    """Plain list of findings, used by the monitor and the combined report."""
+    color = _use_color(stream)
+    w = stream.write
+    if heading:
+        w(f"{heading}\n\n")
+    shown = [f for f in findings if verbose or f.severity is not Severity.INFO]
+    for f in shown:
+        label = f.severity.value.upper()
+        w(f"[{_COLORS.get(f.severity, '') + label + _RESET if color and f.severity in _COLORS else label}] "
+          f"{f.title}\n")
+        d = f.details
+        if f.rule.startswith("network-"):
+            proc = d.get("process", {})
+            w(f"    when:    {d.get('first_seen')} .. {d.get('last_seen')} (x{d.get('count')})  id={d['id'][:8]}\n")
+            if d.get("ips"):
+                w(f"    ips:     {', '.join(d['ips'][:5])}\n")
+            if proc.get("cmdline") or proc.get("exe"):
+                w(f"    process: pid {proc.get('pid', '?')} {proc.get('cmdline') or proc.get('exe')}"[:200] + "\n")
+            if d.get("env") or d.get("container"):
+                w(f"    env:     {d.get('env') or d.get('container') + ' (' + str(d.get('image')) + ')'}\n")
+            for s in d.get("signals", []):
+                w(f"    signal:  {s['signal']}: {s['detail']}\n")
+            if d.get("inventory"):
+                inv = d["inventory"]
+                w(f"    scanner: {inv['packages']} packages in scan #{inv['scan_id']}"
+                  + (f", {len(inv['findings'])} critical/high finding(s)" if inv.get("findings") else "") + "\n")
+            if d.get("targeted_scan"):
+                ts = d["targeted_scan"]
+                w(f"    rescan:  {ts.get('critical', 0)} critical, {ts.get('high', 0)} high\n")
+        else:
+            w(f"    where:   {f.location}\n")
+        w(f"    action:  {f.action}\n\n")
+    counts = {s: sum(1 for f in findings if f.severity is s) for s in Severity}
+    w(", ".join(f"{n} {s.value}" for s, n in counts.items() if n) or "no findings")
+    w("\n")
+
+
 def to_json(result: ScanResult, include_inventory: bool = False) -> dict:
     out = {
         "tool": {"name": "supply-chain-sweep", "version": __version__},
@@ -104,7 +143,8 @@ def to_json(result: ScanResult, include_inventory: bool = False) -> dict:
     return out
 
 
-_SARIF_LEVEL = {Severity.CRITICAL: "error", Severity.HIGH: "warning", Severity.INFO: "note"}
+_SARIF_LEVEL = {Severity.CRITICAL: "error", Severity.HIGH: "warning", Severity.MEDIUM: "warning",
+                Severity.LOW: "note", Severity.INFO: "note"}
 _RULES = {
     "malicious-package": "Known-malicious package version",
     "ioc-hash": "File hash matches a known-malicious file",
@@ -113,6 +153,14 @@ _RULES = {
     "ioc-domain": "Log entry mentions an IOC domain",
     "pth-exec": ".pth file executes code at interpreter start",
     "vulnerable-package": "Package version with known vulnerabilities",
+    "network-threat": "Process contacted a threat-listed domain or IP",
+    "network-cloud-metadata": "Process queried the cloud metadata endpoint",
+    "network-lookalike": "Process contacted a domain imitating a known vendor or package",
+    "network-new-domain": "Process contacted a recently registered domain",
+    "network-direct-ip": "Process connected to an IP without a DNS lookup",
+    "network-out-of-baseline": "Process contacted a domain outside its learned baseline",
+    "network-first-seen": "First contact with a domain from this host",
+    "monitor-health": "Network monitor stopped or capture disabled",
 }
 
 
@@ -122,6 +170,8 @@ def _sarif_location(f: Finding) -> dict:
     if f.rule == "ioc-domain" and ":" in loc:
         loc, _, ln = loc.rpartition(":")
         line = int(ln) if ln.isdigit() else None
+    if f.rule.startswith("network-"):
+        loc = f"dns:{loc}" if not loc.replace(".", "").isdigit() and ":" not in loc else f"ip:{loc}"
     phys: dict = {"artifactLocation": {"uri": ("file://" + loc) if loc.startswith("/") else loc}}
     if line:
         phys["region"] = {"startLine": line}
@@ -129,16 +179,22 @@ def _sarif_location(f: Finding) -> dict:
 
 
 def to_sarif(result: ScanResult) -> dict:
-    rules_used = sorted({f.rule for f in result.findings})
+    return sarif_for(result.findings)
+
+
+def sarif_for(findings: list[Finding]) -> dict:
+    rules_used = sorted({f.rule for f in findings})
     results = []
-    for f in result.findings:
+    for f in findings:
         results.append({
             "ruleId": f.rule,
             "level": _SARIF_LEVEL[f.severity],
             "message": {"text": f"{f.title}. {f.action}"},
             "locations": [_sarif_location(f)],
             "partialFingerprints": {"sweepFingerprint/v1": f.fingerprint},
-            "properties": {"severity": f.severity.value, "advisory": f.advisory, **({"package": f.package} if f.package else {})},
+            "properties": {"severity": f.severity.value, "advisory": f.advisory,
+                           **({"package": f.package} if f.package else {}),
+                           **({"network": f.details} if f.rule.startswith("network-") else {})},
         })
     return {
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
